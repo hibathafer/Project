@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox
 root = tk.Tk()
 root.title("Speech to Text - Graduation Project")
 root.geometry("900x600")
-root.resizable(False, False)
+root.resizable(True, True)
 
 # =====================
 # Top Bar
@@ -58,6 +58,12 @@ text_area.pack(side="top", fill="both", expand=True)
 scrollbar.config(command=text_area.yview)
 
 # =====================
+# Buttons Frame
+# =====================
+buttons_frame = tk.Frame(main_frame)
+buttons_frame.pack(fill="x", pady=15)
+
+# =====================
 # Button Functions
 # =====================
 def copy_text():
@@ -78,20 +84,12 @@ def save_text():
             f.write(text_area.get("1.0", tk.END))
         messagebox.showinfo("Save", f"File saved at:\n{file_path}")
 
-# =====================
-# Buttons Frame
-# =====================
-# Text Area + Scrollbar
-text_frame = tk.Frame(main_frame)
-text_frame.pack(fill="both", expand=True)
+def exit_app():
+    root.quit()
 
-scrollbar = tk.Scrollbar(text_frame)
-scrollbar.pack(side="right", fill="y")
-
-text_area = tk.Text(text_frame, wrap="word", yscrollcommand=scrollbar.set, font=("Segoe UI", 11))
-text_area.pack(side="top", fill="both", expand=True)
-
-scrollbar.config(command=text_area.yview)
+# Exit Button
+exit_button = tk.Button(buttons_frame, text="الخروج", font=("Segoe UI", 12), width=15, bg="#e74c3c", fg="white", relief="flat", command=exit_app)
+exit_button.pack(pady=15)
 
 # Run App
 # =====================
