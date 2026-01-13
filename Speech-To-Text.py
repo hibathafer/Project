@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 import speech_recognition as sr
 import threading
 import time
@@ -34,7 +34,77 @@ title_label.pack(side="left", padx=20)
 main_frame = tk.Frame(root)
 main_frame.pack(fill="both", expand=True, padx=20, pady=20)
 
+# =====================
+# Global Variables & Dialects (يجب تعريفها قبل الاستخدام)
+# =====================
+recording = False
+paused = False
+recognizer = sr.Recognizer()
+timer_running = False
+start_time = 0
+paused_time = 0
+timer_thread = None
+
+# Arabic dialects
+ARABIC_DIALECTS = {
+    "العربية الفصحى (ar-SA)": "ar-SA",
+    "السعودية (ar-SA)": "ar-SA",
+    "المصرية (ar-EG)": "ar-EG",
+    "الإمارات (ar-AE)": "ar-AE",
+    "الجزائر (ar-DZ)": "ar-DZ",
+    "المغرب (ar-MA)": "ar-MA",
+    "الأردن/الشام (ar-JO)": "ar-JO",
+    "لبنان/الشام (ar-LB)": "ar-LB",
+    "تونس (ar-TN)": "ar-TN",
+    "الكويت (ar-KW)": "ar-KW",
+    "العراقية (ar-IQ)": "ar-IQ",
+    "عام (ar)": "ar",
+}
+
+selected_dialect = "ar-SA"
+
+# عداد الجمل
+sentence_count = 0
+
+# تحويل الأحرف الخاصة للهجات
+def convert_special_characters(text):
+    """
+    تحويل الأصوات الخاصة إلى أحرف عربية:
+    - صوت Ch يصبح چ (Jeem مع 3 نقاط)
+    - صوت V يصبح ڤ (Faa مع نقطة فوق)
+    """
+    # تحويل الأصوات إلى الأحرف العربية
+    text = text.replace('ch', 'چ')
+    text = text.replace('Ch', 'چ')
+    text = text.replace('CH', 'چ')
+    
+    text = text.replace('v', 'ڤ')
+    text = text.replace('V', 'ڤ')
+    text = text.replace('ف ع', 'ڤ')  # إذا كتبت "ف ع" بدل v
+    
+    return text
+
+def format_text_output(text):
+    """
+    تنسيق النص وعرضه بطريقة منظمة مع:
+    - رقم الجملة
+    - الوقت والتاريخ
+    - فاصل واضح
+    """
+    global sentence_count
+    from datetime import datetime
+    
+    sentence_count += 1
+    current_time = datetime.now().strftime("%H:%M:%S")
+    
+    # تنسيق الجملة
+    formatted_text = f"\n【 جملة #{sentence_count} 】 [{current_time}]\n{text}\n" + ("=" * 60)
+    
+    return formatted_text
+
+# =====================
 # Status Label
+# =====================
 status_label = tk.Label(main_frame, text="Status: Idle", font=("Segoe UI", 11), fg="gray")
 status_label.pack(anchor="w")
 
@@ -42,20 +112,39 @@ status_label.pack(anchor="w")
 timer_label = tk.Label(main_frame, text="00:00", font=("Segoe UI", 12, "bold"))
 timer_label.pack(anchor="center", pady=10)
 
-# =====================
-# Global Variables
-# =====================
-recording = False
-recognizer = sr.Recognizer()
-timer_running = False
-start_time = 0
-timer_thread = None
+# Dialect Selection Frame
+dialect_frame = tk.Frame(main_frame)
+dialect_frame.pack(fill="x", pady=10)
+
+dialect_label = tk.Label(dialect_frame, text="اختر اللهجة:", font=("Segoe UI", 10))
+dialect_label.pack(side="left", padx=5)
+
+dialect_combo = ttk.Combobox(dialect_frame, values=list(ARABIC_DIALECTS.keys()), 
+                              state="readonly", font=("Segoe UI", 10), width=30)
+dialect_combo.set("العربية الفصحى (ar-SA)")
+dialect_combo.pack(side="left", padx=5)
+
+def on_dialect_change(event=None):
+    global selected_dialect
+    selected_dialect = ARABIC_DIALECTS[dialect_combo.get()]
+
+dialect_combo.bind("<<ComboboxSelected>>", on_dialect_change)
 
 # =====================
 # Microphone Button
 # =====================
 mic_button = tk.Button(main_frame, text="🎙️ Start Recording", font=("Segoe UI", 14), width=20, height=2, bg="#3498db", fg="white", relief="flat")
 mic_button.pack(pady=15)
+
+# Control Buttons Frame
+control_frame = tk.Frame(main_frame)
+control_frame.pack(fill="x", pady=10)
+
+pause_button = tk.Button(control_frame, text="⏸️ Pause", font=("Segoe UI", 11), width=10, bg="#a9b5eb", fg="white", relief="flat", state="disabled")
+pause_button.pack(side="left", padx=5)
+
+resume_button = tk.Button(control_frame, text="▶️ Resume", font=("Segoe UI", 11), width=10, bg="#9eebdc", fg="white", relief="flat", state="disabled")
+resume_button.pack(side="left", padx=5)
 
 # =====================
 # Text Area + Scrollbar
@@ -86,32 +175,59 @@ action_buttons_frame.pack(fill="x", pady=10)
 # =====================
 def update_timer():
     """تحديث العداد بشكل مستمر"""
-    global timer_running, start_time
+    global timer_running, start_time, paused_time, paused
     
     while timer_running:
-        elapsed_time = time.time() - start_time
-        minutes = int(elapsed_time // 60)
-        seconds = int(elapsed_time % 60)
-        time_str = f"{minutes:02d}:{seconds:02d}"
-        
-        try:
-            timer_label.config(text=time_str)
-            root.update_idletasks()
-        except:
-            pass
+        if not paused:
+            elapsed_time = time.time() - start_time - paused_time
+            minutes = int(elapsed_time // 60)
+            seconds = int(elapsed_time % 60)
+            time_str = f"{minutes:02d}:{seconds:02d}"
+            
+            try:
+                timer_label.config(text=time_str)
+                root.update_idletasks()
+            except:
+                pass
         
         time.sleep(0.1)
 
+def pause_recording():
+    """إيقاف مؤقت للتسجيل"""
+    global paused, start_time, paused_time
+    
+    if recording and not paused:
+        paused = True
+        paused_time = time.time() - start_time
+        status_label.config(text="Status: Paused", fg="#9b59b6")
+        pause_button.config(state="disabled")
+        resume_button.config(state="normal")
+
+def resume_recording():
+    """استئناف التسجيل"""
+    global paused, start_time, paused_time
+    
+    if recording and paused:
+        paused = False
+        start_time = time.time() - paused_time
+        status_label.config(text="Status: Recording...", fg="red")
+        pause_button.config(state="normal")
+        resume_button.config(state="disabled")
+
 def record_audio():
-    global recording, timer_running, start_time, timer_thread
+    global recording, timer_running, start_time, timer_thread, paused, paused_time
     
     if not recording:
         # Start Recording
         recording = True
+        paused = False
+        paused_time = 0
         timer_running = True
         start_time = time.time()
         
         mic_button.config(text="⏹️ Stop Recording", bg="#e74c3c")
+        pause_button.config(state="normal")
+        resume_button.config(state="disabled")
         status_label.config(text="Status: Recording...", fg="red")
         
         # بدء عداد الوقت في thread منفصل
@@ -124,8 +240,11 @@ def record_audio():
     else:
         # Stop Recording
         recording = False
+        paused = False
         timer_running = False
         mic_button.config(text="🎙️ Start Recording", bg="#3498db")
+        pause_button.config(state="disabled")
+        resume_button.config(state="disabled")
         status_label.config(text="Status: Processing...", fg="orange")
 
 def capture_audio():
@@ -139,8 +258,14 @@ def capture_audio():
         
         # Try to convert speech to text using Google API
         try:
-            text = recognizer.recognize_google(audio_data, language="ar-SA")
-            text_area.insert(tk.END, text + "\n")
+            text = recognizer.recognize_google(audio_data, language=selected_dialect)
+            # تحويل الأحرف الخاصة
+            text = convert_special_characters(text)
+            # تنسيق وعرض النص
+            formatted_text = format_text_output(text)
+            text_area.insert(tk.END, formatted_text)
+            # تمرير تلقائي للأسفل
+            text_area.see(tk.END)
             status_label.config(text="Status: Done", fg="green")
             
             # Copy to clipboard
@@ -158,12 +283,17 @@ def capture_audio():
         status_label.config(text="Status: Error", fg="red")
     finally:
         recording = False
+        paused = False
         timer_running = False
         mic_button.config(text="🎙️ Start Recording", bg="#3498db")
+        pause_button.config(state="disabled")
+        resume_button.config(state="disabled")
         timer_label.config(text="00:00")
 
 def clear_text():
+    global sentence_count
     text_area.delete("1.0", tk.END)
+    sentence_count = 0  # إعادة تعيين عداد الجمل
 
 def save_text():
     file_path = filedialog.asksaveasfilename(
@@ -190,6 +320,8 @@ exit_button.pack(side="left", padx=5)
 
 # Connect Microphone Button
 mic_button.config(command=record_audio)
+pause_button.config(command=pause_recording)
+resume_button.config(command=resume_recording)
 
 # Run App
 # =====================
